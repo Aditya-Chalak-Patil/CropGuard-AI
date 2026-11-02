@@ -1,0 +1,8 @@
+
+/* Multilingual disease information report */
+.report-language-control{display:flex;align-items:center;gap:8px;color:#63766b;font-size:12px;font-weight:700}
+.report-language-control select{border:1px solid #d9e5dc;background:#fff;color:#173d2d;border-radius:9px;padding:8px 10px;font:inherit}
+.report-treatment-note{margin-top:14px;padding:13px 15px;border-left:3px solid #8dbb7c;background:#f3f8f0;border-radius:0 9px 9px 0;color:#53665d;font-size:14px;line-height:1.8}
+.report-section-intro,.report-info-tile p,.report-action-list p,.report-explain-banner p,.report-disclaimer p{font-size:15px!important;line-height:1.85!important}
+.report-info-tile p{white-space:normal}
+@media(max-width:760px){.report-language-control{width:100%;justify-content:space-between}.report-top-actions{flex-wrap:wrap}}

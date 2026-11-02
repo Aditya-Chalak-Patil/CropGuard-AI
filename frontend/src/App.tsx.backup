@@ -1,0 +1,637 @@
+import { useEffect, useRef, useState } from "react";
+import "./App.css";
+import "./CropGuard-report.css";
+
+type UploadResult = {
+  status?: string;
+  filename?: string;
+  format?: string;
+  width?: number;
+  height?: number;
+  message?: string;
+  error?: string;
+  prediction?: {
+    class_name: string;
+    confidence: number;
+    warning: string;
+  };
+  explainability?: {
+    available: boolean;
+    overlay_data_url: string | null;
+    method: string;
+    note: string;
+  };
+};
+
+const API_BASE = "http://127.0.0.1:5000";
+
+function formatDiseaseName(value: string) {
+  return value
+    .replaceAll("___", " — ")
+    .replaceAll("__", " — ")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function App() {
+  const [image, setImage] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [crop, setCrop] = useState("Tomato");
+  const [language, setLanguage] = useState("English");
+  const [isUploading, setIsUploading] = useState(false);
+  const [result, setResult] = useState<UploadResult | null>(null);
+  const [error, setError] = useState("");
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [showReport, setShowReport] = useState(false);
+  const [activeReportSection, setActiveReportSection] = useState("overview");
+
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkBackend() {
+      try {
+        const response = await fetch(`${API_BASE}/api/health`);
+        if (!response.ok) throw new Error("Backend unavailable");
+        if (!cancelled) setBackendOnline(true);
+      } catch {
+        if (!cancelled) setBackendOnline(false);
+      }
+    }
+
+    void checkBackend();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (image) URL.revokeObjectURL(image);
+    };
+  }, [image]);
+
+  function handleImage(selectedFile?: File) {
+    if (!selectedFile) return;
+
+    setError("");
+    setResult(null);
+    setShowReport(false);
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+
+    if (!allowedTypes.includes(selectedFile.type)) {
+      setError("Please upload a JPG, PNG or WEBP image.");
+      return;
+    }
+
+    if (selectedFile.size > 8 * 1024 * 1024) {
+      setError("Image size must be 8 MB or less.");
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(selectedFile);
+    setImage((previousImage) => {
+      if (previousImage) URL.revokeObjectURL(previousImage);
+      return previewUrl;
+    });
+    setFile(selectedFile);
+  }
+
+  async function uploadForValidation() {
+    if (!file) {
+      setError("Please select a leaf image first.");
+      return;
+    }
+
+    setIsUploading(true);
+    setError("");
+    setResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      formData.append("crop", crop);
+      formData.append("language", language);
+
+      const response = await fetch(`${API_BASE}/api/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await response.json()) as UploadResult;
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI prediction failed.");
+      }
+
+      if (!data.prediction) {
+        throw new Error("Prediction was not returned by the AI model.");
+      }
+
+      setResult(data);
+      setBackendOnline(true);
+      setActiveReportSection("overview");
+      setShowReport(true);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not connect to the backend."
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  function scrollToDoctor() {
+    document.getElementById("doctor")?.scrollIntoView({
+      behavior: "smooth",
+    });
+  }
+
+  function printReport() {
+    window.print();
+  }
+
+  if (showReport && result?.prediction) {
+    const prediction = result.prediction;
+    const diseaseName = formatDiseaseName(prediction.class_name);
+    const confidence = Math.max(0, Math.min(100, prediction.confidence));
+    const reportDate = new Date().toLocaleDateString(
+      language === "Marathi" ? "mr-IN" : language === "Hindi" ? "hi-IN" : "en-IN",
+      { day: "2-digit", month: "long", year: "numeric" }
+    );
+    const reportId = `CG-${Date.now().toString().slice(-8)}`;
+
+    const sections = [
+      { id: "overview", label: "Overview", number: "01" },
+      { id: "symptoms", label: "Symptoms", number: "02" },
+      { id: "causes", label: "Causes & risk", number: "03" },
+      { id: "treatment", label: "Treatment plan", number: "04" },
+      { id: "prevention", label: "Prevention", number: "05" },
+    ];
+
+    return (
+      <div className="report-shell">
+        <aside className="report-sidebar">
+          <button className="report-brand" onClick={() => setShowReport(false)}>
+            <span className="report-brand-mark">✳</span>
+            <span>
+              <strong>CropGuard <em>AI</em></strong>
+              <small>INTELLIGENT CROP CARE</small>
+            </span>
+          </button>
+
+          <div className="report-sidebar-label">REPORT NAVIGATION</div>
+          <nav className="report-nav">
+            {sections.map((section) => (
+              <button
+                key={section.id}
+                className={activeReportSection === section.id ? "active" : ""}
+                onClick={() => {
+                  setActiveReportSection(section.id);
+                  document.getElementById(`report-${section.id}`)?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  });
+                }}
+              >
+                <span>{section.number}</span>
+                {section.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="report-sidebar-bottom">
+            <span className="report-status-dot" />
+            <div>
+              <strong>AI analysis complete</strong>
+              <small>Prototype assessment</small>
+            </div>
+          </div>
+        </aside>
+
+        <main className="report-main">
+          <header className="report-topbar">
+            <div className="report-breadcrumb">
+              Workspace <span>/</span> AI Crop Doctor <span>/</span> Report
+            </div>
+            <div className="report-top-actions">
+              <span className="report-complete-pill">
+                <i /> Analysis complete
+              </span>
+              <button className="report-back-button" onClick={() => setShowReport(false)}>
+                ← Dashboard
+              </button>
+            </div>
+          </header>
+
+          <div className="report-content">
+            <section className="report-heading">
+              <div>
+                <div className="report-eyebrow">CROPGUARD AI · DIAGNOSTIC CENTER</div>
+                <h1>Crop Disease <span>Analysis</span></h1>
+                <p>AI-generated leaf assessment and crop care report.</p>
+              </div>
+              <div className="report-heading-meta">
+                <small>REPORT ID</small>
+                <strong>{reportId}</strong>
+                <small>{reportDate}</small>
+              </div>
+            </section>
+
+            <section className="report-hero-grid" id="report-overview">
+              <article className="report-image-card">
+                <div className="report-card-topline">
+                  <div>
+                    <span className="report-step">01</span>
+                    <div>
+                      <h2>Analyzed leaf</h2>
+                      <p>Original uploaded image</p>
+                    </div>
+                  </div>
+                  <span className="report-image-tag">SOURCE IMAGE</span>
+                </div>
+                {image ? (
+                  <img className="report-leaf-image" src={image} alt="Uploaded leaf analyzed by CropGuard AI" />
+                ) : (
+                  <div className="report-image-empty">No image preview available</div>
+                )}
+                <div className="report-image-footer">
+                  <span><i /> Image received</span>
+                  <span>{result.width} × {result.height}px</span>
+                </div>
+              </article>
+
+              <article className="report-diagnosis-card">
+                <div className="report-diagnosis-top">
+                  <span className="report-step">02</span>
+                  <span className="report-detected-label"><i /> MODEL PREDICTION</span>
+                </div>
+                <div className="report-disease-kicker">PREDICTED CONDITION</div>
+                <h2>{diseaseName}</h2>
+                <p className="report-disease-subtitle">
+                  {crop} · Plant leaf classification
+                </p>
+
+                <div className="report-confidence-block">
+                  <div className="report-confidence-head">
+                    <span>Prediction confidence score</span>
+                    <strong>{confidence.toFixed(1)}%</strong>
+                  </div>
+                  <div className="report-confidence-track">
+                    <div style={{ width: `${confidence}%` }} />
+                  </div>
+                  <small>This is the model's score, not a verified measure of diagnostic accuracy.</small>
+                </div>
+
+                <div className="report-diagnosis-facts">
+                  <div><span>Selected crop</span><strong>{crop}</strong></div>
+                  <div><span>Report language</span><strong>{language}</strong></div>
+                  <div><span>Model classes</span><strong>15 supported labels</strong></div>
+                </div>
+              </article>
+            </section>
+
+            <section className="report-section-card" aria-label="Grad-CAM explainability">
+              <div className="report-section-heading">
+                <div>
+                  <span className="report-step">03</span>
+                  <div>
+                    <div className="report-eyebrow">EXPLAINABLE AI</div>
+                    <h2>AI attention map · Grad-CAM</h2>
+                  </div>
+                </div>
+                <span className="report-coming">
+                  {result.explainability?.available ? "GRAD-CAM READY" : "MAP UNAVAILABLE"}
+                </span>
+              </div>
+              {result.explainability?.available && result.explainability.overlay_data_url ? (
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                  gap: "18px",
+                  marginTop: "18px"
+                }}>
+                  <div>
+                    {image && <img
+                      src={image}
+                      alt="Original uploaded leaf"
+                      style={{ width: "100%", height: "auto", maxHeight: "360px", objectFit: "contain", borderRadius: "12px", background: "#edf2ed" }}
+                    />}
+                    <p className="report-section-intro">Original uploaded image</p>
+                  </div>
+                  <div>
+                    <img
+                      src={result.explainability.overlay_data_url}
+                      alt="Grad-CAM heatmap overlay showing image regions that influenced the model prediction"
+                      style={{ width: "100%", height: "auto", maxHeight: "360px", objectFit: "contain", borderRadius: "12px", background: "#edf2ed" }}
+                    />
+                    <p className="report-section-intro">Grad-CAM overlay · model input crop (224 × 224)</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="report-section-intro">
+                  {result.explainability?.note || "Grad-CAM map was not returned by the backend for this image."}
+                </p>
+              )}
+              <p className="report-section-intro" style={{ marginTop: "12px" }}>
+                {result.explainability?.note || "Grad-CAM highlights regions that influenced the prediction. It does not identify exact infected tissue or confirm a disease."}
+              </p>
+            </section>
+
+            <section className="report-explain-banner">
+              <div className="report-explain-icon">✳</div>
+              <div>
+                <strong>What this report tells you</strong>
+                <p>
+                  The classifier predicts a label for the full image. Grad-CAM highlights
+                  regions that influenced that prediction; it is not a disease boundary
+                  detector and does not prove that highlighted regions are infected.
+                </p>
+              </div>
+              <span className="report-beta">
+                {result.explainability?.available ? "XAI · GRAD-CAM" : "XAI · UNAVAILABLE"}
+              </span>
+            </section>
+
+            <section className="report-section-card" id="report-symptoms">
+              <div className="report-section-heading">
+                <div><span className="report-step">03</span><div>
+                  <div className="report-eyebrow">UNDERSTAND THE CONDITION</div>
+                  <h2>Symptoms & identification</h2>
+                </div></div>
+                <span className="report-coming">REFERENCE CONTENT NEXT</span>
+              </div>
+              <p className="report-section-intro">
+                Disease-specific symptom descriptions will be linked to the exact model
+                label in the next implementation step. Do not use the model label alone
+                as confirmation of disease.
+              </p>
+              <div className="report-info-grid">
+                <div className="report-info-tile">
+                  <span className="report-info-icon">⌕</span>
+                  <strong>Visual symptoms</strong>
+                  <p>Detailed signs and distinguishing features will appear here.</p>
+                </div>
+                <div className="report-info-tile">
+                  <span className="report-info-icon">◉</span>
+                  <strong>Where to inspect</strong>
+                  <p>Leaf areas and other plant parts to examine will appear here.</p>
+                </div>
+                <div className="report-info-tile">
+                  <span className="report-info-icon">✳</span>
+                  <strong>Similar conditions</strong>
+                  <p>Look-alike diseases and non-disease causes will be listed here.</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="report-two-column">
+              <article className="report-section-card" id="report-causes">
+                <div className="report-section-heading">
+                  <div><span className="report-step">04</span><div>
+                    <div className="report-eyebrow">RISK FACTORS</div>
+                    <h2>Causes & spread</h2>
+                  </div></div>
+                </div>
+                <p className="report-section-intro">
+                  Verified information about the predicted condition, its causes and
+                  spread conditions will be added from a disease reference database.
+                </p>
+              </article>
+
+              <article className="report-section-card" id="report-treatment">
+                <div className="report-section-heading">
+                  <div><span className="report-step">05</span><div>
+                    <div className="report-eyebrow">CROP CARE</div>
+                    <h2>Treatment plan</h2>
+                  </div></div>
+                </div>
+                <p className="report-section-intro">
+                  No pesticide or chemical treatment is prescribed by this prototype yet.
+                  Disease-specific, locally appropriate guidance will be added after
+                  reference verification.
+                </p>
+              </article>
+            </section>
+
+            <section className="report-section-card" id="report-prevention">
+              <div className="report-section-heading">
+                <div><span className="report-step">06</span><div>
+                  <div className="report-eyebrow">LONG-TERM CROP HEALTH</div>
+                  <h2>Prevention & next actions</h2>
+                </div></div>
+              </div>
+              <div className="report-action-list">
+                <div><span>01</span><p>Inspect multiple leaves and more than one plant before acting on the prediction.</p></div>
+                <div><span>02</span><p>Record crop variety, recent weather, irrigation and any recent spray applications.</p></div>
+                <div><span>03</span><p>Seek confirmation from a qualified agricultural officer if symptoms are spreading or severe.</p></div>
+              </div>
+            </section>
+
+            <section className="report-disclaimer">
+              <span>!</span>
+              <div>
+                <strong>Important diagnostic disclaimer</strong>
+                <p>{prediction.warning} The model was trained on a limited set of PlantVillage classes.
+                  Field images, lighting, crop varieties and similar-looking conditions may affect results.
+                  Confirm the condition before applying any treatment.</p>
+              </div>
+            </section>
+
+            <footer className="report-footer">
+              <span>CropGuard AI <i>·</i> Academic project prototype</span>
+              <div>
+                <button onClick={printReport}>Print report</button>
+                <button className="report-primary-action" onClick={printReport}>Download / Save as PDF ↗</button>
+              </div>
+            </footer>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-icon">✳</div>
+          <div>
+            <h2>CropGuard<span> AI</span></h2>
+            <p>INTELLIGENT CROP CARE</p>
+          </div>
+        </div>
+
+        <p className="nav-label">WORKSPACE</p>
+        <button className="nav-item active" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+          ▦ <span>Dashboard</span>
+        </button>
+        <button className="nav-item" onClick={scrollToDoctor}>⌕ <span>AI Crop Doctor</span></button>
+        <button className="nav-item" onClick={() => setError("Report history will be available after database integration.")}>
+          ▤ <span>My Reports</span>
+        </button>
+        <button className="nav-item" onClick={() => setError("Model insights will be available after model evaluation.")}>
+          ◈ <span>Model Insights</span>
+        </button>
+
+        <div className="sidebar-bottom">
+          <div className="status-dot" />
+          <span>Crop Disease Detection Platform</span>
+          <small>Prototype v0.3</small>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        <header className="topbar">
+          <div className="breadcrumb">Workspace <span>/</span> Dashboard</div>
+          <div className="top-right">
+            <span className="online">
+              <i style={{ background: backendOnline === null ? "#d5a34a" : backendOnline ? "#79b968" : "#d86b62" }} />
+              {backendOnline === null ? "Checking server" : backendOnline ? "Backend connected" : "Backend offline"}
+            </span>
+            <div className="avatar">CG</div>
+          </div>
+        </header>
+
+        <section className="welcome">
+          <div>
+            <p className="eyebrow">YOUR FARM, BETTER INFORMED</p>
+            <h1>Good farming starts with <span>healthy crops.</span></h1>
+            <p className="subheading">
+              Analyze leaf images, understand crop health, and explore evidence-based care guidance.
+            </p>
+          </div>
+          <div className="welcome-art" aria-hidden="true">
+            <div className="art-circle">✳</div>
+            <div className="art-leaf">❧</div>
+            <span>AI · AGRICULTURE · CARE</span>
+          </div>
+        </section>
+
+        <section className="stats-grid">
+          <div className="stat-card"><div className="stat-icon">⌕</div><p>AI Crop Doctor</p><h3>Image analysis</h3><small>Upload a leaf photo to begin</small></div>
+          <div className="stat-card"><div className="stat-icon">◉</div><p>Supported languages</p><h3>3 languages</h3><small>English · Hindi · Marathi</small></div>
+          <div className="stat-card"><div className="stat-icon">✓</div><p>AI model</p><h3>15 classes</h3><small>Tomato · Potato · Pepper</small></div>
+        </section>
+
+        <section className="doctor-section" id="doctor">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">AI-POWERED CROP ANALYSIS</p>
+              <h2>AI Crop Doctor</h2>
+              <p>Start with a clear photo of the affected leaf.</p>
+            </div>
+            <span className="beta-tag">PREVIEW</span>
+          </div>
+
+          <div className="doctor-grid">
+            <div className="upload-card">
+              <div className="card-heading">
+                <span className="step-number">01</span>
+                <div><h3>Upload leaf image</h3><p>JPG, PNG or WEBP · Maximum 8 MB</p></div>
+              </div>
+
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                onChange={(event) => handleImage(event.target.files?.[0])}
+              />
+
+              <div
+                className={`drop-zone ${image ? "has-image" : ""}`}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => { event.preventDefault(); handleImage(event.dataTransfer.files[0]); }}
+                onClick={() => fileRef.current?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    fileRef.current?.click();
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Upload a crop leaf image"
+              >
+                {image ? (
+                  <>
+                    <img className="leaf-preview" src={image} alt="Selected crop leaf preview" />
+                    <strong>{file?.name}</strong>
+                    <span>Click to choose a different image</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="upload-icon">↑</div>
+                    <strong>Drop your leaf image here</strong>
+                    <span>or click to browse files</span>
+                    <div className="browse-button">Choose image</div>
+                  </>
+                )}
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Crop type
+                  <select value={crop} onChange={(event) => setCrop(event.target.value)}>
+                    <option value="Tomato">Tomato</option>
+                    <option value="Potato">Potato</option>
+                    <option value="Pepper">Pepper</option>
+                    <option value="Unknown / Not sure">Unknown / Not sure</option>
+                  </select>
+                </label>
+                <label>
+                  Report language
+                  <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+                    <option>English</option>
+                    <option>Hindi</option>
+                    <option>Marathi</option>
+                  </select>
+                </label>
+              </div>
+
+              <button className="analyze-button" disabled={!file || isUploading} onClick={() => void uploadForValidation()}>
+                {isUploading ? "Analyzing leaf..." : "Analyze leaf with AI"} <span>→</span>
+              </button>
+
+              {error && <p className="privacy-note" role="alert">⚠ {error}</p>}
+              <p className="privacy-note">
+                Predictions are experimental. The report will show the model output and its limitations.
+              </p>
+            </div>
+
+            <div className="guide-column">
+              <div className="guide-card">
+                <div className="guide-icon">✳</div>
+                <p className="eyebrow">FOR BETTER RESULTS</p>
+                <h3>Capture a clear leaf photo.</h3>
+                <ul>
+                  <li>Use natural, even lighting.</li>
+                  <li>Focus on the affected leaf.</li>
+                  <li>Avoid blurry or very dark images.</li>
+                  <li>Include healthy and affected areas if possible.</li>
+                </ul>
+              </div>
+              <div className="disclaimer-card">
+                <span>ⓘ</span>
+                <div>
+                  <strong>Responsible diagnosis</strong>
+                  <p>A model prediction is not a confirmed diagnosis. Check findings with a qualified agricultural expert.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <footer>CropGuard AI <span>·</span> Academic project prototype <span>·</span> AI predictions require validation</footer>
+      </main>
+    </div>
+  );
+}
+
+export default App;
